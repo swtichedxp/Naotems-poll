@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { supabase } from '../lib/supabase';
 
-// **IMPORTANT: Replace this with your secure admin email address.**
+// **IMPORTANT: Must match the email used to register the Admin account on the main site.**
 const ADMIN_EMAIL = 'admin.department@uni.edu'; 
 
 export default function AdminLogin({ onLogin }) {
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(ADMIN_EMAIL); // Pre-fill with admin email
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -20,7 +20,6 @@ export default function AdminLogin({ onLogin }) {
     }
 
     try {
-      // Use Supabase's standard sign-in function
       const { user, error } = await supabase.auth.signIn({
         email,
         password,
@@ -28,14 +27,12 @@ export default function AdminLogin({ onLogin }) {
 
       if (error) throw error;
       
-      // If login is successful, call the parent function to update state
       if (user) {
-          alert('Admin login successful!');
-          onLogin(user); 
+          onLogin(user); // Triggers state change in parent to show panel
       }
 
     } catch (error) {
-      alert(`Login Error: ${error.message}. Check the email and password.`);
+      alert(`Login Error: ${error.message}. Check password or ensure the admin account is registered.`);
     } finally {
       setLoading(false);
     }
@@ -49,13 +46,14 @@ export default function AdminLogin({ onLogin }) {
         Admin Panel Access
       </h2>
       <form onSubmit={handleAdminLogin}>
-        <label style={{ display: 'block', marginBottom: '5px', color: '#e0c0ff' }}>Email (Admin Only):</label>
+        <label style={{ display: 'block', marginBottom: '5px', color: '#e0c0ff' }}>Email:</label>
         <input 
           type="email" 
           placeholder="Admin Email" 
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
+          readOnly // Disable changing the email for security once deployed
         />
 
         <label style={{ display: 'block', marginBottom: '5px', color: '#e0c0ff' }}>Password:</label>
@@ -88,6 +86,3 @@ export default function AdminLogin({ onLogin }) {
     </div>
   );
 }
-
-// **NOTE: You must first sign up this ADMIN_EMAIL with a strong password 
-// on your main site's registration form (pages/index.js) for Supabase to recognize it.**
