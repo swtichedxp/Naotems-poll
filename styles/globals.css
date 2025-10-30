@@ -1,0 +1,81 @@
+/* Basic reset for consistent styling */
+html, body {
+  padding: 0;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
+    Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  background: #1a0033; /* Dark purple background */
+  color: #f0e6ff; /* Light purple-white text */
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Custom Scrollbar for a sleek look */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #330066; /* Darker purple track */
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(135deg, #6a1a8c, #8b008b); /* Purple gradient thumb */
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(135deg, #8b008b, #a020f0);
+}
+
+/* Base button style - we'll override specifically later */
+button {
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  color: white; /* Default white text for all buttons */
+}
+
+button:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
+button:disabled {
+  background: #5a307a !important; /* Muted purple for disabled buttons */
+  cursor: not-allowed;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"] {
+  background: #330066; /* Dark purple input background */
+  border: 1px solid #6a1a8c; /* Purple border */
+  color: #f0e6ff; /* Light text color */
+  padding: 10px 15px;
+  border-radius: 8px;
+  width: 100%; /* Make inputs take full width */
+  margin-bottom: 15px;
+  transition: border-color 0.3s ease;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus {
+  outline: none;
+  border-color: #a020f0; /* Brighter purple on focus */
+}
+
+/* Placeholder text color */
+input::placeholder {
+  color: #b080d0;
+  opacity: 1; /* Firefox default opacity */
+}
