@@ -1,445 +1,476 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import PollVoting from '../components/PollVoting';
-import { Sun, LogIn, UserPlus, Send, AlertTriangle, Loader, RefreshCw, X } from 'lucide-react';
+import AdminLogin from '../components/AdminLogin';
+import { LogOut, UserPlus, LogIn, TrendingUp, RefreshCcw } from 'lucide-react';
+import Head from 'next/head';
 
-// --- CONSTANTS ---
-// We convert Matric/Username to a valid Supabase email for auth:
-const EMAIL_DOMAIN = '@fpe.edu';
-const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // <-- UPDATED ADMIN EMAIL
+// --- CONFIGURATION ---
+const APP_DOMAIN = 'fpe.edu'; // Used for internal email generation
+const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // The designated administrator email
 
-// --- CUSTOM HOOK FOR AUTHENTICATION STATUS ---
-const useAuth = () => {
+// --- HELPER FUNCTIONS ---
+
+/**
+ * Creates a stable, valid email for Supabase authentication.
+ * Format: matric-[IDENTIFIER]@fpe.edu
+ * @param {string} identifier - The student's matric number or chosen username.
+ */
+const generateSupabaseEmail = (identifier) => {
+    // Sanitize input to ensure no invalid characters in the email local part
+    const sanitizedIdentifier = identifier.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return `matric-${sanitizedIdentifier}@${APP_DOMAIN}`;
+};
+
+/**
+ * Looks up the correct Supabase email based on the matric number provided during login.
+ */
+const findUserEmail = async (matricNumber) => {
+    const { data } = await supabase
+        .from('profiles')
+        .select('matric_number')
+        .eq('matric_number', matricNumber)
+        .limit(1);
+
+    if (data && data.length > 0) {
+        return generateSupabaseEmail(data[0].matric_number);
+    }
+    return null;
+};
+
+/**
+ * Looks up the correct Supabase email based on the username provided during login.
+ */
+const findUserEmailByUsername = async (username) => {
+    const { data } = await supabase
+        .from('profiles')
+        .select('username')
+        .eq('username', username)
+        .limit(1);
+
+    if (data && data.length > 0) {
+        return generateSupabaseEmail(data[0].username);
+    }
+    return null;
+};
+
+
+// --- MAIN COMPONENT ---
+
+export default function Home() {
     const [session, setSession] = useState(null);
+    const [polls, setPolls] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [isAdminView, setIsAdminView] = useState(false);
+    const [isLoginMode, setIsLoginMode] = useState(true); // true for Login, false for Signup
 
+    // Auth Form State
+    const [authInput, setAuthInput] = useState(''); // Holds matric_number or username
+    const [password, setPassword] = useState('');
+    const [isAuthLoading, setIsAuthLoading] = useState(false);
+    const [authError, setAuthError] = useState(null);
+    const [matricNumber, setMatricNumber] = useState(''); // Only used in Signup
+
+    // --- EFFECT: Initialize Session and Check Admin Status ---
     useEffect(() => {
-        // Check initial session
+        // Check for admin view via URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        setIsAdminView(urlParams.get('admin') === 'true');
+
+        // Initial session check
         supabase.auth.getSession().then(({ data: { session } }) => {
             setSession(session);
             setLoading(false);
         });
 
-        // Listen for auth changes
+        // Setup listener for auth state changes
         const { data: authListener } = supabase.auth.onAuthStateChange(
             (_event, session) => {
                 setSession(session);
-                setLoading(false);
+                if (_event === 'SIGNED_OUT') {
+                    // Force refresh when signing out to clear state
+                    window.location.reload(); 
+                }
             }
         );
 
-        return () => {
-            authListener?.unsubscribe();
-        };
+        return () => authListener.subscription.unsubscribe();
     }, []);
 
-    return { session, loading };
-};
+    // --- DATA FETCHING ---
+    const fetchPolls = useCallback(async () => {
+        if (loading) return; // Wait for initial loading to finish
+        
+        const { data, error } = await supabase
+          .from('polls')
+          .select(`
+            id, title, cost_per_vote, is_active, created_at,
+            candidates(id, name, picture_url, manifesto_summary) // Join candidates
+          `)
+          .eq('is_active', true)
+          .order('created_at', { ascending: false });
 
-// --- HELPER FUNCTION: Convert Matric/Username to Supabase Email ---
-// This is used for login. It searches the profiles table for a match.
-const findUserEmail = async (input) => {
-    const term = input.toLowerCase().trim();
-    
-    // Check if it looks like a matric number
-    const isMatric = term.includes('/');
-    
-    let query = supabase.from('profiles').select('email').limit(1);
+        if (error) {
+            console.error('Error fetching polls:', error);
+            setPolls([]);
+        } else {
+            setPolls(data || []);
+        }
+    }, [loading]);
 
-    if (isMatric) {
-        query = query.eq('matric_number', term);
-    } else {
-        query = query.eq('username', term);
-    }
+    useEffect(() => {
+        // Fetch polls only when not in admin view and session is ready
+        if (!isAdminView && !loading) {
+            fetchPolls();
+        }
+    }, [isAdminView, loading, fetchPolls]);
 
-    const { data, error } = await query;
-    
-    if (error) {
-        console.error("Profile search error:", error);
-        return null;
-    }
-    
-    return data && data.length > 0 ? data[0].email : null;
-};
-
-// --- GLASS MORPHISM STYLES ---
-const glassStyle = {
-    background: 'rgba(255, 255, 255, 0.15)',
-    backdropFilter: 'blur(15px)',
-    border: '1px solid rgba(255, 255, 255, 0.3)',
-    boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.37)',
-    borderRadius: '15px',
-};
-
-// --- Custom Glass Input Component ---
-const InputGlass = (props) => (
-    <input 
-        {...props}
-        style={{
-            width: '100%', padding: '15px 20px', marginBottom: '15px',
-            background: 'rgba(255, 255, 255, 0.1)',
-            border: '1px solid rgba(255, 255, 255, 0.4)',
-            color: 'white',
-            outline: 'none',
-            fontSize: '1em',
-            borderRadius: '10px',
-            transition: 'border-color 0.3s, background 0.3s',
-            boxShadow: '0 0 5px rgba(0, 0, 0, 0.2) inset',
-            '::placeholder': { color: 'rgba(255, 255, 255, 0.6)' },
-            '::-webkit-input-placeholder': { color: 'rgba(255, 255, 255, 0.6)' },
-            '::-moz-placeholder': { color: 'rgba(255, 255, 255, 0.6)' }
-        }}
-    />
-);
-
-
-// --- AUTHENTICATION FORM COMPONENT ---
-const AuthForm = ({ setMode, mode }) => {
-    const [matricOrUsername, setMatricOrUsername] = useState('');
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
-
+    // --- AUTH HANDLERS ---
     const handleLogin = async (e) => {
         e.preventDefault();
-        setLoading(true);
-        setError(null);
-        
-        // 1. Find the Supabase email based on Matric/Username
-        const email = await findUserEmail(matricOrUsername);
-        
-        if (!email || !password) {
-            setError('Login failed. Invalid Matric/Username or Password.');
-            setLoading(false);
-            return;
-        }
+        setIsAuthLoading(true);
+        setAuthError(null);
 
         try {
-            // 2. Sign in with the found email
-            const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-            
-            if (authError) {
-                setError('Login failed. Please check your credentials.');
+            // Determine if input is matric number or username
+            let emailToUse = await findUserEmail(authInput.toUpperCase()); // Check as Matric
+            if (!emailToUse) {
+                emailToUse = await findUserEmailByUsername(authInput.toLowerCase()); // Check as Username
             }
-        } catch (err) {
-            setError(err.message || 'An unexpected error occurred during login.');
+            
+            if (!emailToUse) {
+                throw new Error("Login failed: Matric number or Username not found. Please sign up.");
+            }
+
+            const { error } = await supabase.auth.signInWithPassword({
+                email: emailToUse,
+                password,
+            });
+
+            if (error) throw error;
+
+        } catch (error) {
+            setAuthError(error.message || 'Login failed. Check your credentials.');
         } finally {
-            setLoading(false);
+            setIsAuthLoading(false);
         }
     };
 
     const handleSignup = async (e) => {
         e.preventDefault();
-        setLoading(true);
-        setError(null);
+        setIsAuthLoading(true);
+        setAuthError(null);
 
-        const matricNumber = matricOrUsername.trim();
-        const supEmail = `${matricNumber.toLowerCase().replace(/[^a-z0-9\/]/g, '')}${EMAIL_DOMAIN}`;
-        
-        if (!matricNumber || !password || username.trim().length < 3) {
-            setError('Please fill in Matric Number, Username, and Password.');
-            setLoading(false);
+        // Basic validation
+        if (!matricNumber || !authInput || !password) {
+            setAuthError('Please fill in all fields (Matric Number, Username, Password).');
+            setIsAuthLoading(false);
             return;
         }
 
-        try {
-            // 1. Check if the username is already taken
-            const { data: userCheck, error: checkError } = await supabase.from('profiles').select('id').eq('username', username.trim()).limit(1);
-            if (checkError) throw checkError;
-            if (userCheck && userCheck.length > 0) {
-                 setError('This username is already taken.');
-                 setLoading(false);
-                 return;
-            }
+        const emailToUse = generateSupabaseEmail(matricNumber);
 
-            // 2. Sign Up (uses generated email/password)
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-                email: supEmail,
+        try {
+            // 1. Create the user in auth.users
+            const { data: authData, error: authError } = await supabase.auth.signUp({
+                email: emailToUse,
                 password: password,
             });
 
-            if (signUpError) {
-                if (signUpError.message.includes('already registered')) {
-                    setError('This Matric Number is already registered.');
-                } else {
-                    setError(`Signup error: ${signUpError.message}`);
-                }
-                setLoading(false);
-                return;
-            }
-            
-            // 3. Create User Profile
-            if (signUpData.user) {
-                const { error: profileError } = await supabase.from('profiles').insert([
-                    { 
-                        id: signUpData.user.id, 
-                        username: username.trim(),
-                        matric_number: matricNumber,
-                        email: supEmail 
-                    }
-                ]);
+            if (authError) throw authError;
 
-                if (profileError) {
-                    // Critical failure: user created, but profile failed.
-                    console.error("Profile creation failed:", profileError);
-                    // It's best to allow the user to try logging in now, as their user might exist
-                    setError("Account created, but failed to save profile. Please log in.");
-                } else {
-                    // Success! Log the user in directly if desired, or redirect to login.
-                    alert('Signup successful! Please log in with your details.');
-                    setMode('login');
-                }
+            const userId = authData.user.id;
+
+            // 2. Insert profile details into public.profiles table
+            const { error: profileError } = await supabase
+                .from('profiles')
+                .insert({
+                    id: userId,
+                    username: authInput.toLowerCase(),
+                    matric_number: matricNumber.toUpperCase(),
+                    email: emailToUse,
+                });
+
+            if (profileError) {
+                // IMPORTANT: If profile insertion fails, delete the user from auth.users to keep the database clean
+                await supabase.auth.admin.deleteUser(userId);
+                throw profileError;
             }
 
-        } catch (err) {
-            setError(err.message || 'An unexpected error occurred during signup.');
+            // Success: User is automatically logged in and session state updates
+
+        } catch (error) {
+            console.error('Signup Error:', error);
+            if (error.code === '23505') {
+                 setAuthError('Error: That Matric Number or Username is already registered.');
+            } else {
+                 setAuthError(error.message || 'Signup failed. Please try again.');
+            }
         } finally {
-            setLoading(false);
+            setIsAuthLoading(false);
         }
     };
 
-    return (
-        <div style={{ padding: '30px', ...glassStyle, maxWidth: '400px', width: '90%', margin: '20px auto' }}>
-            <h2 style={{ color: 'white', textAlign: 'center', marginBottom: '20px', textShadow: '0 0 5px rgba(0, 0, 0, 0.5)' }}>
-                {mode === 'login' ? 'Student Login' : 'Student Sign Up'}
-            </h2>
-            <form onSubmit={mode === 'login' ? handleLogin : handleSignup}>
-                {/* Dynamic Switcher Buttons */}
-                <div style={{ display: 'flex', marginBottom: '30px', background: 'rgba(255, 255, 255, 0.1)', borderRadius: '12px', padding: '5px' }}>
-                    <button 
-                        type="button"
-                        onClick={() => { setMode('login'); setError(null); }}
-                        style={{
-                            flex: 1, padding: '10px 0', borderRadius: '8px', 
-                            background: mode === 'login' ? 'rgba(255, 255, 255, 0.3)' : 'transparent',
-                            color: 'white', fontWeight: mode === 'login' ? 'bold' : 'normal',
-                            border: 'none', cursor: 'pointer', transition: 'background 0.3s',
-                            boxShadow: mode === 'login' ? '0 2px 10px rgba(0, 0, 0, 0.4)' : 'none'
-                        }}
-                    >
-                        <LogIn size={16} style={{ marginRight: '5px' }} /> Login
-                    </button>
-                    <button 
-                        type="button"
-                        onClick={() => { setMode('signup'); setError(null); }}
-                        style={{
-                            flex: 1, padding: '10px 0', borderRadius: '8px', 
-                            background: mode === 'signup' ? 'rgba(255, 255, 255, 0.3)' : 'transparent',
-                            color: 'white', fontWeight: mode === 'signup' ? 'bold' : 'normal',
-                            border: 'none', cursor: 'pointer', transition: 'background 0.3s',
-                            boxShadow: mode === 'signup' ? '0 2px 10px rgba(0, 0, 0, 0.4)' : 'none'
-                        }}
-                    >
-                        <UserPlus size={16} style={{ marginRight: '5px' }} /> Sign Up
-                    </button>
-                </div>
-
-                {/* Input Fields */}
-                <InputGlass 
-                    type="text"
-                    placeholder={mode === 'login' ? "Matric No. or Username" : "Matric Number (e.g., FPE/20/1234)"}
-                    value={matricOrUsername}
-                    onChange={(e) => setMatricOrUsername(e.target.value)}
-                    required
-                />
-                
-                {mode === 'signup' && (
-                    <InputGlass 
-                        type="text"
-                        placeholder="Username (Publicly Visible)"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                    />
-                )}
-
-                <InputGlass 
-                    type="password"
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                />
-
-                {error && (
-                    <div style={{ color: '#ff6b6b', background: 'rgba(255, 107, 107, 0.2)', padding: '10px', borderRadius: '8px', marginTop: '15px', display: 'flex', alignItems: 'center', border: '1px solid #ff6b6b' }}>
-                        <AlertTriangle size={16} style={{ marginRight: '8px' }} /> {error}
-                    </div>
-                )}
-                
-                <button 
-                    type="submit" 
-                    disabled={loading}
-                    style={{
-                        width: '100%', padding: '15px', borderRadius: '10px', marginTop: '25px',
-                        background: 'linear-gradient(45deg, #007aff, #5ac8fa)',
-                        color: 'white', fontWeight: 'bold', border: 'none', cursor: 'pointer',
-                        boxShadow: '0 4px 15px rgba(0, 122, 255, 0.4)', transition: 'transform 0.2s, opacity 0.2s',
-                        display: 'flex', justifyContent: 'center', alignItems: 'center',
-                        opacity: loading ? 0.7 : 1, transform: loading ? 'scale(0.98)' : 'scale(1)'
-                    }}
-                >
-                    {loading ? <Loader size={20} className="animate-spin" /> : (mode === 'login' ? 'LOG IN' : 'SIGN UP')}
-                </button>
-            </form>
-            <a href="/admin" style={{ display: 'block', textAlign: 'center', marginTop: '20px', color: 'rgba(255, 255, 255, 0.7)', textDecoration: 'none', fontSize: '0.9em' }}>
-                Admin Login
-            </a>
-        </div>
-    );
-};
-
-
-// --- MAIN APP COMPONENT ---
-export default function Index() {
-    const { session, loading: authLoading } = useAuth();
-    const [polls, setPolls] = useState([]);
-    const [loadingPolls, setLoadingPolls] = useState(true);
-    const [fetchError, setFetchError] = useState(null);
-    const [mode, setMode] = useState('login'); // 'login' or 'signup'
-
-    const fetchPolls = async () => {
-        setLoadingPolls(true);
-        setFetchError(null);
-
-        // Fetch active polls and join the candidates associated with them
-        const { data, error } = await supabase
-            .from('polls')
-            .select(`
-                *, 
-                candidates(id, name, picture_url, manifesto_summary) // <-- NEW JOIN
-            `)
-            .eq('is_active', true)
-            .order('created_at', { ascending: false });
-
-        if (error) {
-            console.error('Error fetching polls:', error);
-            setFetchError('Failed to load polls. Check RLS or database connection.');
-        } else {
-            // Filter polls that have at least one candidate
-            setPolls(data.filter(poll => poll.candidates && poll.candidates.length > 0));
-        }
-        setLoadingPolls(false);
-    };
-
-    useEffect(() => {
-        if (session) {
-            fetchPolls();
-        }
-    }, [session]);
-
-    // Handle Logout
     const handleLogout = async () => {
+        setLoading(true);
         await supabase.auth.signOut();
-        setPolls([]);
-        setLoadingPolls(true);
-        setMode('login'); // Reset mode after logout
+        // The auth listener will handle setting the session to null
     };
 
-    // --- RENDER LOGIC ---
+    // --- RENDERING VIEWS ---
 
     // 1. Loading State
-    if (authLoading) {
-        return <div style={fullScreenCenterStyle}>
-            <Loader size={32} className="animate-spin" color="#fff" />
-            <p style={{ color: 'white', marginTop: '15px' }}>Authenticating...</p>
-        </div>;
-    }
-
-    // 2. Authentication Required (Show the stylish Auth form)
-    if (!session) {
+    if (loading) {
         return (
-            <div style={{ ...fullScreenCenterStyle, backgroundImage: 'url(/background.png), linear-gradient(135deg, #1f2b57 0%, #0c1a3f 100%)' }}>
-                <AuthForm setMode={setMode} mode={mode} />
-            </div>
-        );
-    }
-    
-    // Check if logged-in user is the Admin
-    const isAdmin = session.user.email === ADMIN_EMAIL;
-
-    // 3. Admin Logged In (Redirect/Warning)
-    if (isAdmin) {
-        return (
-            <div style={{ ...fullScreenCenterStyle, background: 'linear-gradient(135deg, #1f2b57 0%, #0c1a3f 100%)' }}>
-                <div style={{ padding: '30px', ...glassStyle, maxWidth: '500px', width: '90%', textAlign: 'center' }}>
-                    <AlertTriangle size={48} color="#ffeb3b" style={{ margin: '0 auto 20px' }} />
-                    <h2 style={{ color: 'white' }}>Admin Portal Access</h2>
-                    <p style={{ color: '#ccc', marginBottom: '20px' }}>
-                        You are logged in as the Administrator. Please navigate to the dedicated Admin route:
-                    </p>
-                    <a href="/admin" style={{ textDecoration: 'none', padding: '10px 20px', borderRadius: '8px', backgroundColor: '#5ac8fa', color: '#1f2b57', fontWeight: 'bold' }}>
-                        Go to Admin Panel
-                    </a>
-                    <button onClick={handleLogout} style={{ marginTop: '15px', background: 'transparent', color: '#ff6b6b', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
-                        <X size={16} style={{ marginRight: '5px' }} /> Log Out Admin
-                    </button>
-                </div>
+            <div className="flex-center">
+                <p>Loading application...</p>
             </div>
         );
     }
 
-    // 4. Student Logged In (Show Polls)
-    return (
-        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #1f2b57 0%, #0c1a3f 100%)', fontFamily: 'Inter, sans-serif' }}>
-            <header style={{ ...glassStyle, backdropFilter: 'blur(10px)', background: 'rgba(31, 43, 87, 0.4)', padding: '15px 5%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 10 }}>
-                <h1 style={{ color: 'white', fontSize: '1.2em', margin: 0, display: 'flex', alignItems: 'center' }}>
-                    <Sun size={20} color="#ffeb3b" style={{ marginRight: '8px' }} /> FPE Department Poll
-                </h1>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                    <span style={{ color: '#ccc', fontSize: '0.9em' }}>
-                        Matric/User: {session.user.email.split(EMAIL_DOMAIN)[0]}
-                    </span>
-                    <button onClick={handleLogout} style={{ background: '#ff6b6b', color: 'white', border: 'none', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer' }}>
-                        Log Out
-                    </button>
-                </div>
-            </header>
+    // 2. Admin View
+    if (isAdminView) {
+        // If the session exists and the user is the Admin, show the full Admin view
+        if (session && session.user.email === ADMIN_EMAIL) {
+            // We use the same component from the admin route
+            return <AdminLogin session={session} onLogout={handleLogout} isAdmin={true} />; 
+        }
+        // Otherwise, show the restricted Admin Login form
+        return <AdminLogin session={session} onLogin={setSession} isAdmin={false} />;
+    }
 
-            <main style={{ padding: '30px 5%', maxWidth: '800px', margin: '0 auto' }}>
-                <h2 style={{ color: 'white', borderBottom: '1px solid rgba(255, 255, 255, 0.2)', paddingBottom: '10px', marginBottom: '30px' }}>
-                    Active Elections ({polls.length})
-                </h2>
+    // 3. Student View (Logged In)
+    if (session) {
+        const student = session.user;
+        const displayName = student.user_metadata?.username || student.email.split('@')[0];
 
-                {fetchError && (
-                    <div style={{ color: '#ff6b6b', background: 'rgba(255, 107, 107, 0.2)', padding: '15px', borderRadius: '10px', display: 'flex', alignItems: 'center', marginBottom: '20px', border: '1px solid #dc3545' }}>
-                        <AlertTriangle size={20} style={{ marginRight: '10px' }} /> {fetchError}
-                        <button onClick={fetchPolls} style={{ marginLeft: 'auto', background: 'none', color: '#ff6b6b', border: '1px solid #ff6b6b', padding: '5px 10px', borderRadius: '5px', cursor: 'pointer' }}>
-                            <RefreshCw size={14} style={{ marginRight: '5px' }} /> Retry
+        return (
+            <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+                <Head>
+                    <title>Live Polls</title>
+                </Head>
+                <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', borderBottom: '1px solid #4b0082', paddingBottom: '15px' }}>
+                    <h1 style={{ color: '#f0e6ff', display: 'flex', alignItems: 'center' }}>
+                         <TrendingUp size={32} style={{ marginRight: '10px' }}/> Department Polls
+                    </h1>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                        <span style={{ marginRight: '20px', fontWeight: 'bold', color: '#e0c0ff' }}>
+                            Welcome, {displayName.split('-')[1] || 'Voter'}
+                        </span>
+                        <button 
+                            onClick={fetchPolls} 
+                            style={{ background: 'linear-gradient(90deg, #8a2be2, #4b0082)', marginRight: '10px', padding: '10px 15px' }}
+                            title="Refresh Polls"
+                        >
+                            <RefreshCcw size={16} />
+                        </button>
+                        <button 
+                            onClick={handleLogout} 
+                            style={{ background: 'linear-gradient(90deg, #dc3545, #a020f0)', padding: '10px 15px' }}
+                        >
+                            <LogOut size={16} style={{ marginRight: '5px' }} /> Logout
                         </button>
                     </div>
-                )}
+                </header>
 
-                {loadingPolls ? (
-                    <div style={{ color: 'white', textAlign: 'center', padding: '50px' }}>
-                        <Loader size={32} className="animate-spin" />
-                        <p style={{ marginTop: '15px' }}>Loading active polls...</p>
-                    </div>
-                ) : polls.length === 0 ? (
-                    <p style={{ color: '#ccc', textAlign: 'center', padding: '50px', ...glassStyle }}>
-                        No active polls available at this time. Check back later!
+                <div className="grid-layout">
+                    {polls.length === 0 ? (
+                        <p style={{ gridColumn: '1 / -1', textAlign: 'center', color: '#e0c0ff' }}>
+                            No active polls are available right now. Check back later!
+                        </p>
+                    ) : (
+                        polls.map(poll => (
+                            <div key={poll.id} style={{ 
+                                background: '#330066', 
+                                borderRadius: '15px', 
+                                padding: '25px', 
+                                boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)' 
+                            }}>
+                                <PollVoting poll={poll} session={session} />
+                            </div>
+                        ))
+                    )}
+                </div>
+
+                {/* Custom CSS for Grid Layout (since Tailwind is not used here) */}
+                <style jsx global>{`
+                    .grid-layout {
+                        display: grid;
+                        grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+                        gap: 30px;
+                    }
+                `}</style>
+            </div>
+        );
+    }
+
+    // 4. Student Logic (Logged Out / Auth Form) - The Glass-morphism Design
+    return (
+        <div style={{ 
+            minHeight: '100vh', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            // Background image reference here: Make sure background.png is in your public folder
+            backgroundImage: 'url("/background.png")', 
+            backgroundSize: 'cover', 
+            backgroundPosition: 'center',
+            backgroundAttachment: 'fixed',
+            padding: '20px'
+        }}>
+            <Head>
+                <title>{isLoginMode ? 'Login' : 'Sign Up'} - Poll</title>
+            </Head>
+
+            <div style={{ 
+                padding: '40px', 
+                maxWidth: '450px', 
+                width: '100%',
+                // Glass-morphism Effect
+                background: 'rgba(255, 255, 255, 0.1)', 
+                backdropFilter: 'blur(10px)', 
+                WebkitBackdropFilter: 'blur(10px)',
+                borderRadius: '20px', 
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+            }}>
+                <div style={{ display: 'flex', marginBottom: '30px', borderRadius: '15px', overflow: 'hidden' }}>
+                    <button
+                        onClick={() => setIsLoginMode(true)}
+                        style={{ 
+                            flex: 1, 
+                            padding: '15px 20px', 
+                            fontWeight: 'bold', 
+                            transition: 'all 0.3s',
+                            background: isLoginMode 
+                                ? 'linear-gradient(45deg, #a020f0, #8a2be2)' 
+                                : 'rgba(255, 255, 255, 0.1)',
+                            color: isLoginMode ? 'white' : '#e0c0ff',
+                            borderRight: '1px solid rgba(255, 255, 255, 0.2)'
+                        }}
+                    >
+                        <LogIn size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} /> Login
+                    </button>
+                    <button
+                        onClick={() => setIsLoginMode(false)}
+                        style={{ 
+                            flex: 1, 
+                            padding: '15px 20px', 
+                            fontWeight: 'bold', 
+                            transition: 'all 0.3s',
+                            background: !isLoginMode 
+                                ? 'linear-gradient(45deg, #a020f0, #8a2be2)' 
+                                : 'rgba(255, 255, 255, 0.1)',
+                            color: !isLoginMode ? 'white' : '#e0c0ff',
+                        }}
+                    >
+                        <UserPlus size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} /> Sign Up
+                    </button>
+                </div>
+
+                <h2 style={{ textAlign: 'center', color: 'white', marginBottom: '25px', fontWeight: 'lighter' }}>
+                    {isLoginMode ? 'Welcome Back, Voter' : 'Create Your Voting Account'}
+                </h2>
+
+                <form onSubmit={isLoginMode ? handleLogin : handleSignup}>
+                    
+                    {/* --- SIGNUP ONLY: Matric Number --- */}
+                    {!isLoginMode && (
+                        <>
+                            <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Matric Number:</label>
+                            <input 
+                                type="text" 
+                                placeholder="E.g., OT20240116642" 
+                                value={matricNumber}
+                                onChange={(e) => setMatricNumber(e.target.value.toUpperCase())}
+                                required={!isLoginMode}
+                                style={{ marginBottom: '15px' }}
+                            />
+                        </>
+                    )}
+
+                    {/* --- BOTH: Username (Signup) / Matric or Username (Login) --- */}
+                    <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>
+                        {isLoginMode ? 'Matric Number or Username:' : 'Username (for login):'}
+                    </label>
+                    <input 
+                        type="text" 
+                        placeholder={isLoginMode ? 'Enter Matric No. or Username' : 'Choose a unique username'} 
+                        value={authInput}
+                        onChange={(e) => setAuthInput(e.target.value)}
+                        required
+                        style={{ marginBottom: '15px' }}
+                    />
+                    
+                    <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Password:</label>
+                    <input 
+                        type="password" 
+                        placeholder="Enter your password" 
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        style={{ marginBottom: '25px' }}
+                    />
+
+                    {authError && (
+                        <p style={{ color: '#ff6b6b', textAlign: 'center', background: 'rgba(255, 107, 107, 0.2)', padding: '10px', borderRadius: '8px', marginBottom: '15px' }}>
+                            {authError}
+                        </p>
+                    )}
+
+                    <button 
+                        type="submit" 
+                        disabled={isAuthLoading}
+                        style={{ 
+                            background: isLoginMode 
+                                ? 'linear-gradient(90deg, #4CAF50, #2e8b57)' 
+                                : 'linear-gradient(90deg, #0077b6, #00b4d8)',
+                            width: '100%', 
+                            padding: '15px 20px', 
+                            fontSize: '1.1em',
+                            border: 'none',
+                            borderRadius: '10px'
+                        }}
+                    >
+                        {isAuthLoading ? 'Processing...' : (isLoginMode ? 'Log In Now' : 'Create Account')}
+                    </button>
+                    
+                    <p style={{ textAlign: 'center', color: '#e0c0ff', marginTop: '20px', fontSize: '0.9em' }}>
+                        {isLoginMode ? 'Need an account?' : 'Already registered?'} 
+                        <span 
+                            onClick={() => setIsLoginMode(!isLoginMode)} 
+                            style={{ color: '#a020f0', cursor: 'pointer', fontWeight: 'bold', marginLeft: '5px', textDecoration: 'underline' }}
+                        >
+                            {isLoginMode ? 'Sign Up' : 'Log In'}
+                        </span>
                     </p>
-                ) : (
-                    polls.map(poll => (
-                        <div key={poll.id} style={{ marginBottom: '40px' }}>
-                            <PollVoting poll={poll} session={session} />
-                        </div>
-                    ))
-                )}
-            </main>
+                </form>
+            </div>
+            {/* Additional Global Styles for Glass Input Fields */}
+            <style jsx global>{`
+                input[type="text"],
+                input[type="password"] {
+                    width: 100%;
+                    padding: 12px 15px;
+                    border: 1px solid rgba(255, 255, 255, 0.3);
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.1); /* Slightly visible fill */
+                    color: white;
+                    outline: none;
+                    transition: all 0.3s;
+                    font-size: 1em;
+                    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+                }
+                input[type="text"]::placeholder,
+                input[type="password"]::placeholder {
+                    color: rgba(255, 255, 255, 0.7);
+                }
+                input[type="text"]:focus,
+                input[type="password"]:focus {
+                    border-color: #a020f0; /* Purple glow on focus */
+                    box-shadow: 0 0 15px rgba(160, 32, 240, 0.5);
+                }
+            `}</style>
         </div>
     );
 }
-
-// --- GLOBAL STYLES (Tailwind/CSS equivalent for full screen centering) ---
-const fullScreenCenterStyle = {
-    minHeight: '100vh',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    fontFamily: 'Inter, sans-serif',
-};
