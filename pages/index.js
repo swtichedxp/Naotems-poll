@@ -79,13 +79,11 @@ export default function Home() {
         if (!session) return;
         setLoading(true);
 
-        // Fetch polls and join candidates
+        // FIX: Select ALL columns (including the JSONB 'candidates' column) 
+        // We removed the invalid relational join syntax.
         const { data, error } = await supabase
           .from('polls')
-          .select(`
-            *, 
-            candidates(id, name, picture_url, manifesto_summary) 
-          `)
+          .select(`*`) // <-- Corrected query syntax
           .eq('is_active', true)
           .order('created_at', { ascending: false });
 
@@ -281,7 +279,7 @@ export default function Home() {
                         <h1 style={{ textAlign: 'center', color: '#a020f0' }}>Admin Dashboard</h1>
                         {/* NOTE: You need to ensure the AdminPanelUI component is correctly rendered here in a separate file */}
                         <div style={{ marginTop: '20px', background: '#330066', padding: '30px', borderRadius: '15px' }}>
-                            Admin Panel UI would be loaded here. (Check your `pages/admin/create-poll.js` file for full logic).
+                            Admin Panel UI would be loaded here. (Check your `components/AdminPanelUI.js` file for full logic).
                         </div>
                     </div>
                 </div>
@@ -517,10 +515,10 @@ CRITICAL NOTES FOR DEPLOYMENT:
     FOR ALL
     USING (auth.uid() = id)
     WITH CHECK (auth.uid() = id);
-    -- Allow SELECT for login lookup (safe as it only returns email)
-    CREATE POLICY "Allow anonymous read for login" ON public.profiles
+    -- Allow SELECT for login lookup
+    CREATE POLICY "Allow authenticated read for login lookup" ON public.profiles
     FOR SELECT
-    USING (true);
+    USING (auth.role() = 'authenticated');
 
 
 2. ADMIN BYPASS: The hardcoded check is only for ease of development. 
