@@ -1,29 +1,25 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import PollCreationForm from './PollCreationForm'; 
-import { RefreshCw, CheckCircle, X, Loader } from 'lucide-react';
-
-const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // <-- UPDATED ADMIN EMAIL
+import PollCreationForm from './PollCreationForm'; // Extracted for clarity
+import { CheckCircle, X, Search } from 'lucide-react'; // Added Lucide imports
 
 export default function AdminPanelUI({ session, onLogout }) {
     const [pendingVotes, setPendingVotes] = useState([]);
     const [isLoadingVotes, setIsLoadingVotes] = useState(true);
+    const [searchTerm, setSearchTerm] = useState('');
 
     // --- Fetch Pending Votes ---
     const fetchPendingVotes = async () => {
         setIsLoadingVotes(true);
-        
-        // Select vote details and join the poll title, candidate name, and user's profile info
+        // Select vote details and join the poll title and user's matric/username
         const { data, error } = await supabase
             .from('votes')
             .select(`
-                id, transaction_ref, proof_url, created_at,
+                id, transaction_ref, proof_url, option_voted, created_at,
                 polls(title), 
-                candidates(name),
-                profiles(username, matric_number)
+                users!inner(user_metadata->>matric_number, user_metadata->>username)
             `)
-            .eq('status', 'PENDING')
-            .order('created_at', { ascending: true }); // Oldest first
+            .eq('status', 'PENDING');
 
         if (error) {
             console.error('Error fetching pending votes:', error);
@@ -35,19 +31,7 @@ export default function AdminPanelUI({ session, onLogout }) {
 
     useEffect(() => {
         fetchPendingVotes();
-        // Setup real-time listener for new pending votes (optional but highly recommended)
-        const voteSubscription = supabase
-            .channel('pending-votes-changes')
-            .on('postgres_changes', 
-                { event: 'INSERT', schema: 'public', table: 'votes', filter: 'status=eq.PENDING' }, 
-                (payload) => {
-                    // Add new vote to the top of the list
-                    setPendingVotes(current => [payload.new, ...current]); 
-                }
-            )
-            .subscribe();
-
-        return () => supabase.removeChannel(voteSubscription);
+        // Optional: Set up a real-time listener here for instant updates
     }, []);
 
     // --- Approval Handler ---
@@ -59,70 +43,84 @@ export default function AdminPanelUI({ session, onLogout }) {
             .eq('id', voteId);
 
         if (error) {
-            alert(`Failed to update vote status: ${error.message}`);
-            console.error(error);
+            console.error(`Error ${newStatus} vote:`, error);
+            // Use a custom UI alert instead of 'alert()'
+            console.log(`Failed to update vote ${voteId} to ${newStatus}.`);
         } else {
-            // Remove the approved/rejected vote from the UI immediately
-            setPendingVotes(current => current.filter(vote => vote.id !== voteId));
+            // Re-fetch or locally remove the approved/rejected vote
+            setPendingVotes(prev => prev.filter(vote => vote.id !== voteId));
         }
     };
 
-    const cardStyle = {
-        background: '#1f2b57',
-        borderRadius: '15px',
-        padding: '30px',
-        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)',
-        marginBottom: '30px',
-        border: '1px solid #3c5484'
+    const filteredVotes = pendingVotes.filter(vote => {
+        const userMatric = vote.users.matric_number?.toLowerCase() || '';
+        const userName = vote.users.username?.toLowerCase() || '';
+        const pollTitle = vote.polls.title?.toLowerCase() || '';
+        const ref = vote.transaction_ref?.toLowerCase() || '';
+        const search = searchTerm.toLowerCase();
+
+        return userMatric.includes(search) || userName.includes(search) || pollTitle.includes(search) || ref.includes(search);
+    });
+    
+    // Simple utility to format timestamp
+    const formatTime = (isoString) => {
+        return new Date(isoString).toLocaleString();
     };
 
+
     return (
-        <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #0c1a3f 0%, #061025 100%)', padding: '30px 5%', fontFamily: 'Inter, sans-serif', color: '#f0e6ff' }}>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px', borderBottom: '1px solid #3c5484', paddingBottom: '15px' }}>
-                <h1 style={{ color: '#5ac8fa', fontSize: '1.8em' }}>Admin Control Panel</h1>
-                <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
-                    <span style={{ color: '#ccc', fontSize: '0.9em' }}>Admin: {ADMIN_EMAIL}</span>
-                    <button onClick={onLogout} style={{ background: '#dc3545', padding: '10px 20px' }}>
+        <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+            <h1 style={{ color: '#f0e6ff', textAlign: 'center', marginBottom: '30px' }}>
+                Department Poll Admin Dashboard
+            </h1>
+
+            {/* --- 1. Pending Votes Section --- */}
+            <div style={{ background: '#330066', borderRadius: '15px', padding: '30px', marginBottom: '30px', boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)' }}>
+                <h2 style={{ color: '#f0e6ff', borderBottom: '1px solid #4b0082', paddingBottom: '15px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    🗳️ Pending Vote Approvals ({pendingVotes.length})
+                    <button onClick={onLogout} style={{ background: '#a020f0', padding: '8px 15px', fontSize: '0.9em' }}>
                         Log Out
                     </button>
-                </div>
-            </header>
-            
-            <div style={{ ...cardStyle }}>
-                <h2 style={{ color: '#f0e6ff', borderBottom: '1px solid #3c5484', paddingBottom: '15px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between' }}>
-                    🗳️ Pending Vote Approvals ({pendingVotes.length})
-                    <button onClick={fetchPendingVotes} style={{ background: '#5ac8fa', padding: '5px 10px', fontSize: '0.9em', display: 'flex', alignItems: 'center' }}>
-                        <RefreshCw size={14} style={{ marginRight: '5px' }} /> Refresh
-                    </button>
                 </h2>
-                {isLoadingVotes ? (
-                    <div style={{ textAlign: 'center', padding: '30px' }}>
-                        <Loader size={32} className="animate-spin" color="#5ac8fa" />
-                        <p style={{ marginTop: '10px' }}>Loading pending votes...</p>
-                    </div>
-                ) : pendingVotes.length === 0 ? (
-                    <p style={{ textAlign: 'center', color: '#ccc', padding: '30px', background: '#131e3c', borderRadius: '10px' }}>
-                        All clear! No pending votes to approve.
-                    </p>
-                ) : (
-                    <div style={{ display: 'grid', gap: '20px', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
-                        {pendingVotes.map(vote => (
-                            <div key={vote.id} style={{ border: '1px solid #3c5484', borderRadius: '10px', padding: '20px', background: '#131e3c' }}>
-                                <p style={{ fontWeight: 'bold', color: '#5ac8fa' }}>Poll: {vote.polls?.title || 'N/A'}</p>
-                                <p><strong>Candidate Voted:</strong> {vote.candidates?.name || 'N/A'}</p>
-                                {/* Access profile data */}
-                                <p><strong>Voter:</strong> {vote.profiles?.username} ({vote.profiles?.matric_number})</p>
-                                <p><strong>Submitted:</strong> {new Date(vote.created_at).toLocaleString()}</p>
-                                <p><strong>Ref:</strong> {vote.transaction_ref}</p>
-                                
-                                <div style={{ margin: '15px 0' }}>
-                                    <a href={vote.proof_url} target="_blank" rel="noopener noreferrer" 
-                                       style={{ display: 'inline-block', background: '#4b0082', padding: '8px 15px', borderRadius: '6px', color: 'white', textDecoration: 'none' }}>
-                                        View Proof Screenshot
-                                    </a>
-                                </div>
 
-                                <div style={{ display: 'flex', gap: '10px', marginTop: '15px'}}>
+                <div style={{ display: 'flex', alignItems: 'center', background: '#1a0033', borderRadius: '8px', padding: '5px 10px', margin: '15px 0' }}>
+                    <Search size={20} style={{ color: '#e0c0ff', marginRight: '10px' }} />
+                    <input
+                        type="text"
+                        placeholder="Search by Matric No, Username, or Transaction Ref..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        style={{ flexGrow: 1, border: 'none', background: 'transparent', padding: '10px 0', color: '#f0e6ff' }}
+                    />
+                </div>
+
+                {isLoadingVotes ? (
+                    <p style={{ color: '#e0c0ff', textAlign: 'center' }}>Loading pending votes...</p>
+                ) : filteredVotes.length === 0 ? (
+                    <p style={{ color: '#e0c0ff', textAlign: 'center' }}>🎉 All caught up! No pending votes.</p>
+                ) : (
+                    <div style={{ display: 'grid', gap: '20px', marginTop: '20px', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))' }}>
+                        {filteredVotes.map((vote) => (
+                            <div key={vote.id} style={{ background: '#4b0082', borderRadius: '10px', padding: '20px', boxShadow: '0 4px 15px rgba(0, 0, 0, 0.3)' }}>
+                                <p style={{ fontWeight: 'bold', fontSize: '1.1em', marginBottom: '10px', color: '#fff' }}>
+                                    Poll: {vote.polls.title}
+                                </p>
+                                <p><strong>User:</strong> {vote.users.username || 'N/A'} ({vote.users.matric_number || 'N/A'})</p>
+                                <p><strong>Voted For:</strong> <span style={{ color: '#ffeb3b', fontWeight: 'bold' }}>{vote.option_voted}</span></p>
+                                <p><strong>Ref:</strong> <code>{vote.transaction_ref}</code></p>
+                                <p><strong>Submitted:</strong> {formatTime(vote.created_at)}</p>
+                                <p style={{ marginTop: '10px' }}>
+                                    <a 
+                                        href={vote.proof_url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer" 
+                                        style={{ color: '#e0c0ff', textDecoration: 'underline' }}
+                                    >
+                                        🔗 View Payment Proof
+                                    </a>
+                                </p>
+
+                                <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
                                     <button 
                                         onClick={() => handleVoteApproval(vote.id, 'APPROVED')}
                                         style={{ background: 'linear-gradient(90deg, #4CAF50, #2e8b57)', padding: '8px 15px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
@@ -130,7 +128,7 @@ export default function AdminPanelUI({ session, onLogout }) {
                                         <CheckCircle size={16} style={{ marginRight: '5px' }} /> Approve
                                     </button>
                                     <button 
-                                        onClick={() => handleVoteApproval(vote.id, 'REJECTED')}\
+                                        onClick={() => handleVoteApproval(vote.id, 'REJECTED')}
                                         style={{ background: 'linear-gradient(90deg, #dc3545, #a020f0)', padding: '8px 15px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                                     >
                                         <X size={16} style={{ marginRight: '5px' }} /> Reject
@@ -143,12 +141,12 @@ export default function AdminPanelUI({ session, onLogout }) {
             </div>
 
             {/* --- 2. Create New Poll --- */}
-            <div style={cardStyle}>
-                <h2 style={{ color: '#f0e6ff', borderBottom: '1px solid #3c5484', paddingBottom: '15px' }}>
+            <div style={{ background: '#330066', borderRadius: '15px', padding: '30px', boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)' }}>
+                <h2 style={{ color: '#f0e6ff', borderBottom: '1px solid #4b0082', paddingBottom: '15px' }}>
                     ➕ Create New Poll
                 </h2>
                 <PollCreationForm session={session} />
             </div>
         </div>
     );
-                    }
+                            }
