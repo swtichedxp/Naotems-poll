@@ -2,7 +2,7 @@
 html, body {
   padding: 0;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen,
     Ubuntu, Cantarell, Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
   background: #1a0033; /* Dark purple background */
   color: #f0e6ff; /* Light purple-white text */
@@ -23,14 +23,14 @@ a {
   width: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: #330066; /* Darker purple track */
+  background: #1f2b57; /* Dark track for new aesthetic */
 }
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, #6a1a8c, #8b008b); /* Purple gradient thumb */
+  background: linear-gradient(135deg, #007aff, #5ac8fa); /* Blue gradient thumb (Apple style) */
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(135deg, #8b008b, #a020f0);
+  background: linear-gradient(135deg, #5ac8fa, #007aff);
 }
 
 /* Base button style - we'll override specifically later */
@@ -42,40 +42,36 @@ button {
   cursor: pointer;
   transition: all 0.3s ease;
   color: white; /* Default white text for all buttons */
+  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
 }
 
 button:hover:not(:disabled) {
-  opacity: 0.9;
+  opacity: 0.95;
   transform: translateY(-1px);
 }
 
 button:disabled {
-  background: #5a307a !important; /* Muted purple for disabled buttons */
+  background: #3c5484 !important; /* Muted blue for disabled buttons */
   cursor: not-allowed;
+  box-shadow: none;
 }
 
+/* Resetting input styles for the new glass-morphism look, which is applied inline */
 input[type="text"],
 input[type="password"],
-input[type="email"] {
-  background: #330066; /* Dark purple input background */
-  border: 1px solid #6a1a8c; /* Purple border */
-  color: #f0e6ff; /* Light text color */
-  padding: 10px 15px;
+input[type="email"],
+input[type="number"] {
+  background: #1f2b57;
+  border: 1px solid #3c5484;
+  color: #f0e6ff;
+  padding: 12px 15px;
   border-radius: 8px;
-  width: 100%; /* Make inputs take full width */
-  margin-bottom: 15px;
-  transition: border-color 0.3s ease;
+  width: 100%;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+  transition: border-color 0.3s;
 }
 
-input[type="text"]:focus,
-input[type="password"]:focus,
-input[type="email"]:focus {
+input:focus {
+  border-color: #5ac8fa;
   outline: none;
-  border-color: #a020f0; /* Brighter purple on focus */
-}
-
-/* Placeholder text color */
-input::placeholder {
-  color: #b080d0;
-  opacity: 1; /* Firefox default opacity */
 }
