@@ -143,7 +143,6 @@ export default function Home() {
 
         try {
             // 1. Create the user in auth.users using the real email
-            // This immediately logs the user in, which should update the session token
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email: emailToUse,
                 password: password,
@@ -153,8 +152,12 @@ export default function Home() {
 
             const user = authData.user;
             
+            // --- CRITICAL FIX: Wait briefly for the client's session token to update ---
+            // This mitigates the race condition where the RLS policy rejects the insert.
+            await new Promise(r => setTimeout(r, 200)); 
+            // --------------------------------------------------------------------------
+
             // 2. Insert profile details into public.profiles table
-            // ** This call requires the RLS policy to allow the newly authenticated user to write **
             const { error: profileError } = await supabase
                 .from('profiles')
                 .insert({
@@ -166,7 +169,8 @@ export default function Home() {
 
             if (profileError) {
                 console.error("Profile insert failed:", profileError);
-                // If this throws, it is almost certainly an RLS or Unique Constraint issue
+                // If this throws, it is almost certainly a Unique Constraint issue, or the 
+                // timing fix wasn't long enough. We still show the error to the user.
                 throw new Error(`Signup failed. Please verify your RLS Policies on 'profiles' table.`);
             }
 
@@ -350,7 +354,7 @@ export default function Home() {
                         type="text" 
                         placeholder="Enter your Matric Number (e.g., OT20240116642)" 
                         value={matricNumberInput}
-                        onChange={(e) => setMatricNumberInput(e.target.value)} // Removed forced uppercase on change
+                        onChange={(e) => setMatricNumberInput(e.target.value)} 
                         required
                         className="glass-input"
                         style={{ marginBottom: '15px' }}
@@ -453,4 +457,4 @@ export default function Home() {
             `}</style>
         </div>
     );
-            }
+}
