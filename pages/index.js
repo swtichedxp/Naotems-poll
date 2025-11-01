@@ -14,7 +14,7 @@ const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // The designated administrator em
  * Finds the user's real email based ONLY on matric number from the profiles table.
  */
 const findUserEmail = async (matricNo) => {
-    // Standardize lookup value
+    // Standardize lookup value to uppercase for consistency with the database
     const lookupValue = matricNo.toUpperCase();
 
     // Query the profiles table to get the real email associated with the matric number
@@ -42,7 +42,6 @@ export default function Home() {
     const [isLoginMode, setIsLoginMode] = useState(true); // true for Login, false for Signup
 
     // Auth Form State
-    // matricNumberInput is now the sole unique ID field for both modes
     const [matricNumberInput, setMatricNumberInput] = useState(''); 
     const [password, setPassword] = useState('');
     const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -144,6 +143,7 @@ export default function Home() {
 
         try {
             // 1. Create the user in auth.users using the real email
+            // This immediately logs the user in, which should update the session token
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email: emailToUse,
                 password: password,
@@ -151,22 +151,23 @@ export default function Home() {
 
             if (authError) throw authError;
 
-            const userId = authData.user.id;
+            const user = authData.user;
             
             // 2. Insert profile details into public.profiles table
-            // *** FIX: Removed 'username' from payload to prevent internal database error. ***
+            // ** This call requires the RLS policy to allow the newly authenticated user to write **
             const { error: profileError } = await supabase
                 .from('profiles')
                 .insert({
-                    id: userId,
+                    // CRITICAL: We use the ID returned from the successful signup
+                    id: user.id, 
                     matric_number: matricNumberInput.toUpperCase(),
                     email: emailToUse, 
                 });
 
             if (profileError) {
                 console.error("Profile insert failed:", profileError);
-                // The error you were seeing is likely fixed by removing the username field above.
-                throw new Error("Signup failed. Internal error during profile creation. (Check database console for unique constraint errors or ensure the 'profiles' table is correct).");
+                // If this throws, it is almost certainly an RLS or Unique Constraint issue
+                throw new Error(`Signup failed. Please verify your RLS Policies on 'profiles' table.`);
             }
 
             // Success
@@ -175,7 +176,7 @@ export default function Home() {
         } catch (error) {
             console.error('Signup Error:', error);
             if (error.code === '23505') {
-                 setAuthError('Error: That Matric Number or Email is already registered.');
+                 setAuthError('Error: That Matric Number or Email is already registered (Unique constraint violation).');
             } else if (error.message.includes('already registered')) {
                 setAuthError('Error: That email address is already registered.');
             } else {
@@ -205,6 +206,7 @@ export default function Home() {
         if (session && session.user.email === ADMIN_EMAIL) {
             return <AdminLogin session={session} onLogout={handleLogout} isAdmin={true} />; 
         }
+        // AdminLogin handles its own auth state when admin is false
         return <AdminLogin session={session} onLogin={setSession} isAdmin={false} />;
     }
 
@@ -348,7 +350,7 @@ export default function Home() {
                         type="text" 
                         placeholder="Enter your Matric Number (e.g., OT20240116642)" 
                         value={matricNumberInput}
-                        onChange={(e) => setMatricNumberInput(e.target.value.toUpperCase())}
+                        onChange={(e) => setMatricNumberInput(e.target.value)} // Removed forced uppercase on change
                         required
                         className="glass-input"
                         style={{ marginBottom: '15px' }}
@@ -451,4 +453,4 @@ export default function Home() {
             `}</style>
         </div>
     );
-            }
+}
