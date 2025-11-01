@@ -6,27 +6,15 @@ import { LogOut, UserPlus, LogIn, TrendingUp, RefreshCcw } from 'lucide-react';
 import Head from 'next/head';
 
 // --- CONFIGURATION ---
-const APP_DOMAIN = 'example.com'; // CRITICAL: Using reserved domain to pass strict email validation.
+// Removed APP_DOMAIN. We now use the user's real email for authentication.
 const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // The designated administrator email
 
 // --- HELPER FUNCTIONS ---
 
 /**
- * Creates a stable, valid email for Supabase authentication.
- * Format: matric-[IDENTIFIER]@example.com
- * @param {string} identifier - The student's matric number or chosen username.
- */
-const generateSupabaseEmail = (identifier) => {
-    // Sanitize input to ensure no invalid characters in the email local part
-    const sanitizedIdentifier = identifier.toLowerCase().replace(/[^a-z0-9]/g, '');
-    return `matric-${sanitizedIdentifier}@${APP_DOMAIN}`;
-};
-
-/**
- * Looks up the correct Supabase email based on the matric number or username provided during login.
+ * Finds the user's real email based on matric number or username from the profiles table.
  */
 const findUserEmail = async (identifier, type) => {
-    // NOTE: This assumes 'profiles' table has 'matric_number' and 'username' columns.
     const column = type === 'matric' ? 'matric_number' : 'username';
     
     // Clean the identifier based on type for lookup uniformity
@@ -34,14 +22,13 @@ const findUserEmail = async (identifier, type) => {
 
     const { data } = await supabase
         .from('profiles')
-        .select(column)
+        .select('email') // CRITICAL: Select the actual email stored in the profile
         .eq(column, lookupValue)
         .limit(1);
 
     if (data && data.length > 0) {
-        // We use the identifier stored in the profiles table to ensure we use the same one for email generation
-        const userIdentifier = data[0][column]; 
-        return generateSupabaseEmail(userIdentifier);
+        // Return the actual email for Supabase authentication
+        return data[0].email; 
     }
     return null;
 };
@@ -61,7 +48,8 @@ export default function Home() {
     const [password, setPassword] = useState('');
     const [isAuthLoading, setIsAuthLoading] = useState(false);
     const [authError, setAuthError] = useState(null);
-    const [matricNumber, setMatricNumber] = useState(''); // Only used in Signup
+    const [matricNumber, setMatricNumber] = useState(''); // Used in Signup & Login search
+    const [signupEmail, setSignupEmail] = useState(''); // NEW: Real email used in Signup
 
     // --- EFFECT: Initialize Session and Check Admin Status ---
     useEffect(() => {
@@ -93,8 +81,7 @@ export default function Home() {
     const fetchPolls = useCallback(async () => {
         if (loading) return; // Wait for initial loading to finish
         
-        // CRITICAL FIX: We must select all columns (*) to get the JSONB 'candidates' column.
-        // The previous relational join syntax was causing the client-side error.
+        // CRITICAL FIX: Select all columns (*) to get the JSONB 'candidates' column without a relational join.
         const { data, error } = await supabase
           .from('polls')
           .select(`*`) 
@@ -121,10 +108,10 @@ export default function Home() {
         setIsAuthLoading(true);
         setAuthError(null);
         
-        // 1. Try to find email using input as Matric Number
+        // 1. Try to find user's REAL email using input as Matric Number
         let emailToUse = await findUserEmail(authInput, 'matric');
         
-        // 2. If not found, try to find email using input as Username
+        // 2. If not found, try to find user's REAL email using input as Username
         if (!emailToUse) {
             emailToUse = await findUserEmail(authInput, 'username');
         }
@@ -134,9 +121,8 @@ export default function Home() {
                 throw new Error("Login failed: Matric number or Username not found. Please sign up.");
             }
 
-            // Use signInWithPassword as signIn is deprecated
             const { error } = await supabase.auth.signInWithPassword({
-                email: emailToUse,
+                email: emailToUse, // Use the real email found in the profiles table
                 password,
             });
 
@@ -154,18 +140,17 @@ export default function Home() {
         setIsAuthLoading(true);
         setAuthError(null);
 
-        // Basic validation
-        if (!matricNumber || !authInput || !password) {
-            setAuthError('Please fill in all fields (Matric Number, Username, Password).');
+        // Basic validation - Now requires signupEmail
+        if (!matricNumber || !authInput || !signupEmail || !password) {
+            setAuthError('Please fill in all fields (Matric Number, Username, Email, Password).');
             setIsAuthLoading(false);
             return;
         }
 
-        const emailToUse = generateSupabaseEmail(matricNumber);
+        const emailToUse = signupEmail; // Use the real email for auth
 
         try {
-            // 1. Create the user in auth.users
-            // Use signUp instead of deprecated signUpWithEmailAndPassword
+            // 1. Create the user in auth.users using the real email
             const { data: authData, error: authError } = await supabase.auth.signUp({
                 email: emailToUse,
                 password: password,
@@ -182,22 +167,23 @@ export default function Home() {
                     id: userId,
                     username: authInput.toLowerCase(),
                     matric_number: matricNumber.toUpperCase(),
-                    email: emailToUse, // Store the generated email for reference
+                    email: emailToUse, // Store the real email
                 });
 
             if (profileError) {
-                // Log and provide user-friendly error
                 console.error("Profile insert failed:", profileError);
                 throw new Error("Signup failed. Internal error during profile creation.");
             }
 
             // Success: User is automatically logged in and session state updates
             setAuthError("Signup successful! You are now logged in.");
-            
+
         } catch (error) {
             console.error('Signup Error:', error);
             if (error.code === '23505') {
                  setAuthError('Error: That Matric Number or Username is already registered.');
+            } else if (error.message.includes('already registered')) {
+                setAuthError('Error: That email address is already registered.');
             } else {
                  setAuthError(error.message || 'Signup failed. Please try again.');
             }
@@ -222,23 +208,18 @@ export default function Home() {
         );
     }
 
-    // 2. Admin View
+    // 2. Admin View (No changes needed here, as admin uses a real email)
     if (isAdminView) {
-        // If the session exists and the user is the Admin, show the full Admin view
         if (session && session.user.email === ADMIN_EMAIL) {
-            // Note: AdminLogin is used as a wrapper/container for the AdminPanelUI component
-            // We pass a flag to tell it to render the panel, not the login form.
             return <AdminLogin session={session} onLogout={handleLogout} isAdmin={true} />; 
         }
-        // Otherwise, show the restricted Admin Login form
         return <AdminLogin session={session} onLogin={setSession} isAdmin={false} />;
     }
 
     // 3. Student View (Logged In)
     if (session) {
-        // Find display name from email (e.g., matric-OT20240116642@example.com -> OT20240116642)
-        const emailPart = session.user.email.split('@')[0];
-        const displayName = emailPart.startsWith('matric-') ? emailPart.substring(7) : 'Voter';
+        // Now displaying the real email used for auth
+        const displayName = session.user.email; 
 
 
         return (
@@ -389,7 +370,7 @@ export default function Home() {
 
                     {/* --- BOTH: Username (Signup) / Matric or Username (Login) --- */}
                     <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>
-                        {isLoginMode ? 'Matric Number or Username:' : 'Username (for login):'}
+                        {isLoginMode ? 'Matric Number or Username:' : 'Username (for login/display):'}
                     </label>
                     <input 
                         type="text" 
@@ -400,6 +381,22 @@ export default function Home() {
                         className="glass-input"
                         style={{ marginBottom: '15px' }}
                     />
+                    
+                    {/* --- SIGNUP ONLY: Email --- */}
+                    {!isLoginMode && (
+                        <>
+                            <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Email Address:</label>
+                            <input 
+                                type="email" 
+                                placeholder="Enter your real email" 
+                                value={signupEmail}
+                                onChange={(e) => setSignupEmail(e.target.value)}
+                                required={!isLoginMode}
+                                className="glass-input"
+                                style={{ marginBottom: '15px' }}
+                            />
+                        </>
+                    )}
                     
                     <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Password:</label>
                     <input 
@@ -438,7 +435,13 @@ export default function Home() {
                     <p style={{ textAlign: 'center', color: '#e0c0ff', marginTop: '20px', fontSize: '0.9em' }}>
                         {isLoginMode ? 'Need an account?' : 'Already registered?'} 
                         <span 
-                            onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(null); }} 
+                            onClick={() => { 
+                                setIsLoginMode(!isLoginMode); 
+                                setAuthError(null); 
+                                setSignupEmail(''); // Clear email when switching
+                                setAuthInput('');
+                                setPassword('');
+                            }} 
                             style={{ color: '#a020f0', cursor: 'pointer', fontWeight: 'bold', marginLeft: '5px', textDecoration: 'underline' }}
                         >
                             {isLoginMode ? 'Sign Up' : 'Log In'}
@@ -476,4 +479,4 @@ export default function Home() {
             `}</style>
         </div>
     );
-    }
+                                           }
