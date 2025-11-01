@@ -6,24 +6,22 @@ import { LogOut, UserPlus, LogIn, TrendingUp, RefreshCcw } from 'lucide-react';
 import Head from 'next/head';
 
 // --- CONFIGURATION ---
-// Removed APP_DOMAIN. We now use the user's real email for authentication.
 const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // The designated administrator email
 
 // --- HELPER FUNCTIONS ---
 
 /**
- * Finds the user's real email based on matric number or username from the profiles table.
+ * Finds the user's real email based ONLY on matric number from the profiles table.
  */
-const findUserEmail = async (identifier, type) => {
-    const column = type === 'matric' ? 'matric_number' : 'username';
-    
-    // Clean the identifier based on type for lookup uniformity
-    const lookupValue = type === 'matric' ? identifier.toUpperCase() : identifier.toLowerCase();
+const findUserEmail = async (matricNo) => {
+    // Standardize lookup value
+    const lookupValue = matricNo.toUpperCase();
 
+    // Query the profiles table to get the real email associated with the matric number
     const { data } = await supabase
         .from('profiles')
-        .select('email') // CRITICAL: Select the actual email stored in the profile
-        .eq(column, lookupValue)
+        .select('email') 
+        .eq('matric_number', lookupValue) // Search ONLY by matric_number
         .limit(1);
 
     if (data && data.length > 0) {
@@ -44,12 +42,12 @@ export default function Home() {
     const [isLoginMode, setIsLoginMode] = useState(true); // true for Login, false for Signup
 
     // Auth Form State
-    const [authInput, setAuthInput] = useState(''); // Holds username (Signup/Login) or matric_number (Login)
+    // matricNumberInput is now the sole unique ID field for both modes
+    const [matricNumberInput, setMatricNumberInput] = useState(''); 
     const [password, setPassword] = useState('');
     const [isAuthLoading, setIsAuthLoading] = useState(false);
     const [authError, setAuthError] = useState(null);
-    const [matricNumber, setMatricNumber] = useState(''); // Used in Signup & Login search
-    const [signupEmail, setSignupEmail] = useState(''); // NEW: Real email used in Signup
+    const [signupEmail, setSignupEmail] = useState(''); // Real email used ONLY in Signup
 
     // --- EFFECT: Initialize Session and Check Admin Status ---
     useEffect(() => {
@@ -79,9 +77,8 @@ export default function Home() {
 
     // --- DATA FETCHING ---
     const fetchPolls = useCallback(async () => {
-        if (loading) return; // Wait for initial loading to finish
+        if (loading) return; 
         
-        // CRITICAL FIX: Select all columns (*) to get the JSONB 'candidates' column without a relational join.
         const { data, error } = await supabase
           .from('polls')
           .select(`*`) 
@@ -108,19 +105,15 @@ export default function Home() {
         setIsAuthLoading(true);
         setAuthError(null);
         
-        // 1. Try to find user's REAL email using input as Matric Number
-        let emailToUse = await findUserEmail(authInput, 'matric');
-        
-        // 2. If not found, try to find user's REAL email using input as Username
-        if (!emailToUse) {
-            emailToUse = await findUserEmail(authInput, 'username');
-        }
+        // 1. Try to find user's REAL email using Matric Number
+        const emailToUse = await findUserEmail(matricNumberInput);
         
         try {
             if (!emailToUse) {
-                throw new Error("Login failed: Matric number or Username not found. Please sign up.");
+                throw new Error("Login failed: Matric number not found. Please check your number or sign up.");
             }
 
+            // 2. Authenticate with Supabase using the retrieved real email
             const { error } = await supabase.auth.signInWithPassword({
                 email: emailToUse, // Use the real email found in the profiles table
                 password,
@@ -129,7 +122,7 @@ export default function Home() {
             if (error) throw error;
 
         } catch (error) {
-            setAuthError(error.message || 'Login failed. Check your credentials.');
+            setAuthError(error.message || 'Login failed. Check your Matric Number and Password.');
         } finally {
             setIsAuthLoading(false);
         }
@@ -140,9 +133,9 @@ export default function Home() {
         setIsAuthLoading(true);
         setAuthError(null);
 
-        // Basic validation - Now requires signupEmail
-        if (!matricNumber || !authInput || !signupEmail || !password) {
-            setAuthError('Please fill in all fields (Matric Number, Username, Email, Password).');
+        // Basic validation
+        if (!matricNumberInput || !signupEmail || !password) {
+            setAuthError('Please fill in all fields (Matric Number, Email, Password).');
             setIsAuthLoading(false);
             return;
         }
@@ -161,27 +154,28 @@ export default function Home() {
             const userId = authData.user.id;
             
             // 2. Insert profile details into public.profiles table
+            // *** FIX: Removed 'username' from payload to prevent internal database error. ***
             const { error: profileError } = await supabase
                 .from('profiles')
                 .insert({
                     id: userId,
-                    username: authInput.toLowerCase(),
-                    matric_number: matricNumber.toUpperCase(),
-                    email: emailToUse, // Store the real email
+                    matric_number: matricNumberInput.toUpperCase(),
+                    email: emailToUse, 
                 });
 
             if (profileError) {
                 console.error("Profile insert failed:", profileError);
-                throw new Error("Signup failed. Internal error during profile creation.");
+                // The error you were seeing is likely fixed by removing the username field above.
+                throw new Error("Signup failed. Internal error during profile creation. (Check database console for unique constraint errors or ensure the 'profiles' table is correct).");
             }
 
-            // Success: User is automatically logged in and session state updates
+            // Success
             setAuthError("Signup successful! You are now logged in.");
 
         } catch (error) {
             console.error('Signup Error:', error);
             if (error.code === '23505') {
-                 setAuthError('Error: That Matric Number or Username is already registered.');
+                 setAuthError('Error: That Matric Number or Email is already registered.');
             } else if (error.message.includes('already registered')) {
                 setAuthError('Error: That email address is already registered.');
             } else {
@@ -199,7 +193,6 @@ export default function Home() {
 
     // --- RENDERING VIEWS ---
 
-    // 1. Loading State
     if (loading) {
         return (
             <div className="flex-center" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -208,7 +201,6 @@ export default function Home() {
         );
     }
 
-    // 2. Admin View (No changes needed here, as admin uses a real email)
     if (isAdminView) {
         if (session && session.user.email === ADMIN_EMAIL) {
             return <AdminLogin session={session} onLogout={handleLogout} isAdmin={true} />; 
@@ -216,11 +208,9 @@ export default function Home() {
         return <AdminLogin session={session} onLogin={setSession} isAdmin={false} />;
     }
 
-    // 3. Student View (Logged In)
+    // Student View (Logged In)
     if (session) {
-        // Now displaying the real email used for auth
         const displayName = session.user.email; 
-
 
         return (
             <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
@@ -282,14 +272,13 @@ export default function Home() {
         );
     }
 
-    // 4. Student Logic (Logged Out / Auth Form) - The Glass-morphism Design
+    // Student Logic (Logged Out / Auth Form) - The Glass-morphism Design
     return (
         <div style={{ 
             minHeight: '100vh', 
             display: 'flex', 
             alignItems: 'center', 
             justifyContent: 'center', 
-            // Background image reference here: Make sure background.png is in your public folder
             backgroundImage: 'url("/background.png")', 
             backgroundSize: 'cover', 
             backgroundPosition: 'center',
@@ -304,7 +293,6 @@ export default function Home() {
                 padding: '40px', 
                 maxWidth: '450px', 
                 width: '100%',
-                // Glass-morphism Effect
                 background: 'rgba(255, 255, 255, 0.1)', 
                 backdropFilter: 'blur(10px)', 
                 WebkitBackdropFilter: 'blur(10px)',
@@ -352,31 +340,15 @@ export default function Home() {
 
                 <form onSubmit={isLoginMode ? handleLogin : handleSignup}>
                     
-                    {/* --- SIGNUP ONLY: Matric Number --- */}
-                    {!isLoginMode && (
-                        <>
-                            <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Matric Number (Unique ID):</label>
-                            <input 
-                                type="text" 
-                                placeholder="E.g., OT20240116642" 
-                                value={matricNumber}
-                                onChange={(e) => setMatricNumber(e.target.value.toUpperCase())}
-                                required={!isLoginMode}
-                                className="glass-input"
-                                style={{ marginBottom: '15px' }}
-                            />
-                        </>
-                    )}
-
-                    {/* --- BOTH: Username (Signup) / Matric or Username (Login) --- */}
+                    {/* --- BOTH: Matric Number --- */}
                     <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>
-                        {isLoginMode ? 'Matric Number or Username:' : 'Username (for login/display):'}
+                        Matric Number:
                     </label>
                     <input 
                         type="text" 
-                        placeholder={isLoginMode ? 'Enter Matric No. or Username' : 'Choose a unique username'} 
-                        value={authInput}
-                        onChange={(e) => setAuthInput(e.target.value)}
+                        placeholder="Enter your Matric Number (e.g., OT20240116642)" 
+                        value={matricNumberInput}
+                        onChange={(e) => setMatricNumberInput(e.target.value.toUpperCase())}
                         required
                         className="glass-input"
                         style={{ marginBottom: '15px' }}
@@ -438,8 +410,8 @@ export default function Home() {
                             onClick={() => { 
                                 setIsLoginMode(!isLoginMode); 
                                 setAuthError(null); 
-                                setSignupEmail(''); // Clear email when switching
-                                setAuthInput('');
+                                setSignupEmail(''); 
+                                setMatricNumberInput('');
                                 setPassword('');
                             }} 
                             style={{ color: '#a020f0', cursor: 'pointer', fontWeight: 'bold', marginLeft: '5px', textDecoration: 'underline' }}
@@ -458,7 +430,7 @@ export default function Home() {
                     padding: 12px 15px;
                     border: 1px solid rgba(255, 255, 255, 0.3);
                     border-radius: 8px;
-                    background: rgba(255, 255, 255, 0.1); /* Slightly visible fill */
+                    background: rgba(255, 255, 255, 0.1); 
                     color: white;
                     outline: none;
                     transition: all 0.3s;
@@ -473,10 +445,10 @@ export default function Home() {
                 input[type="text"]:focus,
                 input[type="password"]:focus,
                 input[type="email"]:focus {
-                    border-color: #a020f0; /* Purple glow on focus */
+                    border-color: #a020f0; 
                     box-shadow: 0 0 15px rgba(160, 32, 240, 0.5);
                 }
             `}</style>
         </div>
     );
-                                           }
+            }
