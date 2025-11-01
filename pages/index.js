@@ -6,18 +6,19 @@ import { LogOut, UserPlus, LogIn, TrendingUp, RefreshCcw } from 'lucide-react';
 import Head from 'next/head';
 
 // --- CONFIGURATION ---
-const APP_DOMAIN = 'fpe.edu'; // Used for internal email generation
+const APP_DOMAIN = 'example.com'; // **CRITICAL FIX: Using reserved domain to pass strict email validation.**
 const ADMIN_EMAIL = 'naciss.naotems@fpe.edu'; // The designated administrator email
 
 // --- HELPER FUNCTIONS ---
 
 /**
  * Creates a stable, valid email for Supabase authentication.
- * Format: matric-[IDENTIFIER]@fpe.edu
+ * Format: matric-[IDENTIFIER]@example.com
  * @param {string} identifier - The student's matric number or chosen username.
  */
 const generateSupabaseEmail = (identifier) => {
     // Sanitize input to ensure no invalid characters in the email local part
+    // We use the identifier directly in the email name for simplicity.
     const sanitizedIdentifier = identifier.toLowerCase().replace(/[^a-z0-9]/g, '');
     return `matric-${sanitizedIdentifier}@${APP_DOMAIN}`;
 };
@@ -25,31 +26,22 @@ const generateSupabaseEmail = (identifier) => {
 /**
  * Looks up the correct Supabase email based on the matric number provided during login.
  */
-const findUserEmail = async (matricNumber) => {
+const findUserEmail = async (identifier, type) => {
+    const column = type === 'matric' ? 'matric_number' : 'username';
+    
+    // Clean the identifier based on type for lookup uniformity
+    const lookupValue = type === 'matric' ? identifier.toUpperCase() : identifier.toLowerCase();
+
     const { data } = await supabase
         .from('profiles')
-        .select('matric_number')
-        .eq('matric_number', matricNumber)
+        .select(column)
+        .eq(column, lookupValue)
         .limit(1);
 
     if (data && data.length > 0) {
-        return generateSupabaseEmail(data[0].matric_number);
-    }
-    return null;
-};
-
-/**
- * Looks up the correct Supabase email based on the username provided during login.
- */
-const findUserEmailByUsername = async (username) => {
-    const { data } = await supabase
-        .from('profiles')
-        .select('username')
-        .eq('username', username)
-        .limit(1);
-
-    if (data && data.length > 0) {
-        return generateSupabaseEmail(data[0].username);
+        // Return the identifier stored in the profiles table to ensure we use the same one
+        const userIdentifier = data[0][column]; 
+        return generateSupabaseEmail(userIdentifier);
     }
     return null;
 };
@@ -65,7 +57,7 @@ export default function Home() {
     const [isLoginMode, setIsLoginMode] = useState(true); // true for Login, false for Signup
 
     // Auth Form State
-    const [authInput, setAuthInput] = useState(''); // Holds matric_number or username
+    const [authInput, setAuthInput] = useState(''); // Holds username (Signup/Login) or matric_number (Login)
     const [password, setPassword] = useState('');
     const [isAuthLoading, setIsAuthLoading] = useState(false);
     const [authError, setAuthError] = useState(null);
@@ -105,7 +97,7 @@ export default function Home() {
           .from('polls')
           .select(`
             id, title, cost_per_vote, is_active, created_at,
-            candidates(id, name, picture_url, manifesto_summary) // Join candidates
+            candidates(id, name, picture_url, manifesto_summary)
           `)
           .eq('is_active', true)
           .order('created_at', { ascending: false });
@@ -119,7 +111,6 @@ export default function Home() {
     }, [loading]);
 
     useEffect(() => {
-        // Fetch polls only when not in admin view and session is ready
         if (!isAdminView && !loading) {
             fetchPolls();
         }
@@ -130,14 +121,16 @@ export default function Home() {
         e.preventDefault();
         setIsAuthLoading(true);
         setAuthError(null);
-
+        
+        // 1. Try to find email using input as Matric Number
+        let emailToUse = await findUserEmail(authInput, 'matric');
+        
+        // 2. If not found, try to find email using input as Username
+        if (!emailToUse) {
+            emailToUse = await findUserEmail(authInput, 'username');
+        }
+        
         try {
-            // Determine if input is matric number or username
-            let emailToUse = await findUserEmail(authInput.toUpperCase()); // Check as Matric
-            if (!emailToUse) {
-                emailToUse = await findUserEmailByUsername(authInput.toLowerCase()); // Check as Username
-            }
-            
             if (!emailToUse) {
                 throw new Error("Login failed: Matric number or Username not found. Please sign up.");
             }
@@ -180,7 +173,7 @@ export default function Home() {
             if (authError) throw authError;
 
             const userId = authData.user.id;
-
+            
             // 2. Insert profile details into public.profiles table
             const { error: profileError } = await supabase
                 .from('profiles')
@@ -192,9 +185,12 @@ export default function Home() {
                 });
 
             if (profileError) {
-                // IMPORTANT: If profile insertion fails, delete the user from auth.users to keep the database clean
-                await supabase.auth.admin.deleteUser(userId);
-                throw profileError;
+                // If profile insertion fails, delete the user from auth.users to keep the database clean
+                // NOTE: This requires Admin privileges, but we try to clean up best we can.
+                // In production, this cleanup should be handled by a function/trigger if possible.
+                console.error("Profile insert failed, attempting to clean up auth user:", profileError);
+                // await supabase.auth.admin.deleteUser(userId); // Disabled for client-side
+                throw new Error("Signup failed. Internal error during profile creation.");
             }
 
             // Success: User is automatically logged in and session state updates
@@ -214,7 +210,6 @@ export default function Home() {
     const handleLogout = async () => {
         setLoading(true);
         await supabase.auth.signOut();
-        // The auth listener will handle setting the session to null
     };
 
     // --- RENDERING VIEWS ---
@@ -222,7 +217,7 @@ export default function Home() {
     // 1. Loading State
     if (loading) {
         return (
-            <div className="flex-center">
+            <div className="flex-center" style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <p>Loading application...</p>
             </div>
         );
@@ -232,7 +227,6 @@ export default function Home() {
     if (isAdminView) {
         // If the session exists and the user is the Admin, show the full Admin view
         if (session && session.user.email === ADMIN_EMAIL) {
-            // We use the same component from the admin route
             return <AdminLogin session={session} onLogout={handleLogout} isAdmin={true} />; 
         }
         // Otherwise, show the restricted Admin Login form
@@ -241,8 +235,10 @@ export default function Home() {
 
     // 3. Student View (Logged In)
     if (session) {
-        const student = session.user;
-        const displayName = student.user_metadata?.username || student.email.split('@')[0];
+        // Find display name from email (e.g., matric-OT20240116642@example.com -> OT20240116642)
+        const emailPart = session.user.email.split('@')[0];
+        const displayName = emailPart.startsWith('matric-') ? emailPart.substring(7) : 'Voter';
+
 
         return (
             <div style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
@@ -255,7 +251,7 @@ export default function Home() {
                     </h1>
                     <div style={{ display: 'flex', alignItems: 'center' }}>
                         <span style={{ marginRight: '20px', fontWeight: 'bold', color: '#e0c0ff' }}>
-                            Welcome, {displayName.split('-')[1] || 'Voter'}
+                            Welcome, {displayName}
                         </span>
                         <button 
                             onClick={fetchPolls} 
@@ -336,7 +332,7 @@ export default function Home() {
             }}>
                 <div style={{ display: 'flex', marginBottom: '30px', borderRadius: '15px', overflow: 'hidden' }}>
                     <button
-                        onClick={() => setIsLoginMode(true)}
+                        onClick={() => { setIsLoginMode(true); setAuthError(null); }}
                         style={{ 
                             flex: 1, 
                             padding: '15px 20px', 
@@ -352,7 +348,7 @@ export default function Home() {
                         <LogIn size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} /> Login
                     </button>
                     <button
-                        onClick={() => setIsLoginMode(false)}
+                        onClick={() => { setIsLoginMode(false); setAuthError(null); }}
                         style={{ 
                             flex: 1, 
                             padding: '15px 20px', 
@@ -377,7 +373,7 @@ export default function Home() {
                     {/* --- SIGNUP ONLY: Matric Number --- */}
                     {!isLoginMode && (
                         <>
-                            <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Matric Number:</label>
+                            <label style={{ display: 'block', marginBottom: '5px', color: 'white', fontWeight: '500' }}>Matric Number (Unique ID):</label>
                             <input 
                                 type="text" 
                                 placeholder="E.g., OT20240116642" 
@@ -438,7 +434,7 @@ export default function Home() {
                     <p style={{ textAlign: 'center', color: '#e0c0ff', marginTop: '20px', fontSize: '0.9em' }}>
                         {isLoginMode ? 'Need an account?' : 'Already registered?'} 
                         <span 
-                            onClick={() => setIsLoginMode(!isLoginMode)} 
+                            onClick={() => { setIsLoginMode(!isLoginMode); setAuthError(null); }} 
                             style={{ color: '#a020f0', cursor: 'pointer', fontWeight: 'bold', marginLeft: '5px', textDecoration: 'underline' }}
                         >
                             {isLoginMode ? 'Sign Up' : 'Log In'}
@@ -473,4 +469,4 @@ export default function Home() {
             `}</style>
         </div>
     );
-}
+        }
